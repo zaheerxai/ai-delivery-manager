@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Delivery Manager</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f172a; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
+    select option { background: #1e293b; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// Worker proxy removed - calling Google Apps Script directly for multi-device support
+
+const C = {
+  bg:"#0f172a", panel:"#0d1a2b", card:"#1e293b",
+  border:"#1e3a5f", text:"#e2e8f0", muted:"#64748b",
+  accent:"#3b82f6", green:"#22c55e", red:"#ef4444", yellow:"#f59e0b"
+};
+
+const todayStr = () => { const d=new Date(); return `${d.getDate()}/${d.getMonth()+1}/${String(d.getFullYear()).slice(2)}`; };
+const COL_W = { Date:75, Device:180, Buyer:80, Seller:80, Tracking:130, Address:210, Price:68, "Price Total":90, Paid:95, Balance:95 };
+
+const storage = {
+  get: (k) => { try { const v=localStorage.getItem(k); return v ? { value: v } : null; } catch { return null; } },
+  set: (k,v) => { try { localStorage.setItem(k,v); } catch {} },
+  del: (k)   => { try { localStorage.removeItem(k); } catch {} },
+};
+
+function App() {
+  const [gasUrl, setGasUrl]         = useState("");
+  const [token, setToken]           = useState("");
+  const [urlDraft, setUrlDraft]     = useState("");
+  const [tokenDraft, setTokenDraft] = useState("");
+  const [ready, setReady]           = useState(false);
+  const [connectErr, setConnectErr] = useState("");
+
+  const [tab, setTab]     = useState("deliveries");
+  const [panel, setPanel] = useState(null);
+
+  const [rows, setRows]       = useState([]);
+  const [headers, setHeaders] = useState([]);
+  const [prices, setPrices]   = useState([]);
+  const [sheets, setSheets]   = useState({ sellers:[], buyers:[] });
+
+  const [search, setSearch]       = useState("");
+  const [busy, setBusy]           = useState({});
+  const [toast, setToast]         = useState(null);
+  const [editCell, setEditCell]   = useState(null);
+  const [confirmDel, setConfirmDel] = useState(null);
+
+  const [aiText, setAiText]       = useState("");
+  const [aiResults, setAiResults] = useState(null);
+  const [pay, setPay] = useState({ person:"", amount:"", currency:"EUR", note:"", dir:"to" });
+  const [pf,  setPf]  = useState({ device:"", price:"", mode:"add" });
+
+  // Individual sheet viewer state
+  const [selectedSheet, setSelectedSheet] = useState(null);
+  const [sheetData, setSheetData]         = useState([]);
+  const [sheetHeaders, setSheetHeaders]   = useState([]);
+  const [sheetSearch, setSheetSearch]     = useState("");
+  const [editSheetCell, setEditSheetCell] = useState(null);
+  const [confirmSheetDel, setConfirmSheetDel] = useState(null);
+
+  const toastRef = useRef();
+  const urlRef   = useRef("");
+  const tokRef   = useRef("");
+
+  useEffect(() => {
+    const cfg = storage.get("dm-config-v1");
+    if (cfg?.value) {
+      try {
+        const { url, token } = JSON.parse(cfg.value);
+        if (url && token) {
+          setGasUrl(url); setUrlDraft(url); urlRef.current = url;
+          setToken(token); setTokenDraft(token); tokRef.current = token;
+          setReady(true);
+        }
+      } catch {}
+    }
+  }, []);
+
+  useEffect(() => { if (ready) fetchAll(); }, [ready]);
+
+  const notify = (msg, type="ok") => {
+    clearTimeout(toastRef.current);
+    setToast({ msg, type });
+    toastRef.current = setTimeout(() => setToast(null), 3500);
+  };
+  const load = (k, v) => setBusy(b => ({...b,[k]:v}));
+
+  const api = async (action, params={}) => {
+    const url = urlRef.current;
+    const tok = tokRef.current;
+    if (!url || !tok) throw new Error("Not connected");
+    const qs = new URLSearchParams({
+      token: tok, action,
+      body: JSON.stringify({ token: tok, action, ...params })
+    }).toString();
+    const target = `${url}?${qs}`;
+    // Call Google Apps Script directly - supports multiple devices simultaneously
+    const res = await fetch(target, { redirect: 'follow' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error("Response not JSON:\n" + text.slice(0,200)); }
+    if (!data.ok) throw new Error(data.error || "API error");
+    return data.data;
+  };
+
+  const fetchAll    = () => { fetchRows(); fetchPrices(); fetchSheets(); };
+  const fetchRows   = async () => { load("rows",true); try { const d=await api("rows"); const arr=d||[]; if(arr.length>0) setHeaders(Object.keys(arr[0]).filter(k=>!k.startsWith("_"))); setRows(arr); } catch(e){notify("Load failed: "+e.message,"err");} load("rows",false); };
+  const fetchPrices = async () => { load("prices",true); try { setPrices(await api("pricelist")||[]); } catch(e){notify("Price load: "+e.message,"err");} load("prices",false); };
+  const fetchSheets = async () => { try { setSheets(await api("sheets")||{sellers:[],buyers:[]}); } catch {} };
+
+  const saveConfig = async () => {
+    if (!urlDraft.trim()||!tokenDraft.trim()) { setConnectErr("Both URL and token required."); return; }
+    setConnectErr(""); load("connect",true);
+    urlRef.current = urlDraft.trim(); tokRef.current = tokenDraft;
+    try {
+      await api("sheets");
+      setGasUrl(urlDraft.trim()); setToken(tokenDraft);
+      storage.set("dm-config-v1", JSON.stringify({ url:urlDraft.trim(), token:tokenDraft }));
+      setReady(true); setPanel(null); notify("Connected ✓");
+    } catch(e) {
+      urlRef.current = gasUrl; tokRef.current = token;
+      setConnectErr(e.message);
+    }
+    load("connect",false);
+  };
+
+  const extractAI = async () => {
+    if (!aiText.trim()) return;
+    load("ai",true); setAiResults(null);
+    try {
+      const priceStr = prices.map(p=>`"${p.device}":€${p.price}`).join(", ");
+      const sellers  = sheets.sellers.map(s=>s.name).join(", ");
+      const buyers   = sheets.buyers.map(b=>b.name).join(", ");
+      const sys = `You extract mobile phone delivery parcels from messy WhatsApp/text.
+Price list (use exact names): {${priceStr}}
+Known sellers: ${sellers}. Known buyers: ${buyers}. Default buyer: Shoaib.
+Today: ${todayStr()}
+Rules:
+- Extract ALL separate parcels, even if many in one paste.
+- Tracking: LK817841531IE format or 9-digit numbers.
+- Seller: guess from WhatsApp sender e.g. "[4/24, 2:04 PM] Zaheer:" → Zaheer.
+- Address: reconstruct uppercase single line.
+- Device: match exactly to price list.
+- "APARTMENT 157" or "D07KN36" in address → buyer is Shoaib.
+Return ONLY valid JSON array, no markdown:
+[{"Date":"D/M/YY","Device":"exact","Buyer":"name","Seller":"name","Tracking":"number","Address":"FULL ADDRESS"}]`;
+      const res = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,system:sys,messages:[{role:"user",content:aiText}]})});
+      const d = await res.json();
+      const raw = d.content?.find(b=>b.type==="text")?.text||"[]";
+      const parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+      setAiResults(Array.isArray(parsed)?parsed:[parsed]);
+    } catch(e){notify("Extraction failed: "+e.message,"err");}
+    load("ai",false);
+  };
+
+  const confirmEntries = async () => {
+    load("confirm",true);
+    try {
+      await api("appendRows",{rows:aiResults});
+      notify(`${aiResults.length} parcel${aiResults.length!==1?"s":""} saved ✓`);
+      setAiText(""); setAiResults(null); setPanel(null); fetchRows();
+    } catch(e){notify("Save failed: "+e.message,"err");}
+    load("confirm",false);
+  };
+
+  const saveCell = async (row,col,val) => {
+    setEditCell(null);
+    if (val===String(row[col]||"")) return;
+    try { await api("updateRow",{row:row._row,data:{[col]:val}}); setRows(rs=>rs.map(r=>r._row===row._row?{...r,[col]:val}:r)); }
+    catch(e){notify("Update failed: "+e.message,"err");}
+  };
+
+  const doDelete = async (row) => {
+    setConfirmDel(null);
+    try { await api("deleteRow",{row:row._row}); setRows(rs=>rs.filter(r=>r._row!==row._row)); notify("Row deleted ✓"); }
+    catch(e){notify("Delete failed: "+e.message,"err");}
+  };
+
+  const submitPayment = async () => {
+    if (!pay.person||!pay.amount){notify("Person & amount required","err");return;}
+    load("pay",true);
+    try { await api("payment",{...pay}); notify(`Payment recorded in ${pay.person}'s sheet ✓`); setPay({person:"",amount:"",currency:"EUR",note:"",dir:"to"}); setPanel(null); }
+    catch(e){notify("Failed: "+e.message,"err");}
+    load("pay",false);
+  };
+
+  const submitPrice = async () => {
+    if (!pf.device||!pf.price){notify("Device & price required","err");return;}
+    load("price",true);
+    try { await api(pf.mode==="add"?"addPrice":"updatePrice",{device:pf.device,price:parseFloat(pf.price)}); notify(`Price ${pf.mode==="add"?"added":"updated"} ✓`); setPf({device:"",price:"",mode:"add"}); fetchPrices(); }
+    catch(e){notify(e.message,"err");}
+    load("price",false);
+  };
+
+  const deletePrice = async (device) => {
+    try { await api("deletePrice",{device}); notify(`${device} removed ✓`); fetchPrices(); }
+    catch(e){notify(e.message,"err");}
+  };
+
+const syncPrices = async () => {
+    load("sync",true);
+    try { const r=await api("syncPrices"); const ok=r.sync.filter(s=>s.status==="ok").length; notify(`Synced to ${ok}/${r.sync.length} seller sheets ✓`); }
+    catch(e){notify("Sync failed: "+e.message,"err");}
+    load("sync",false);
+  };
+
+  // Individual sheet functions
+  const fetchSheetData = async (sheetName) => {
+    if (!sheetName) return;
+    load("sheetData",true);
+    try {
+      const d = await api("sheetRows", { sheet: sheetName });
+      const arr = d || [];
+      if (arr.length > 0) setSheetHeaders(Object.keys(arr[0]).filter(k => !k.startsWith("_")));
+      setSheetData(arr);
+    } catch(e) { notify("Load sheet failed: " + e.message, "err"); }
+    load("sheetData",false);
+  };
+
+  const saveSheetCell = async (row, col, val) => {
+    setEditSheetCell(null);
+    if (val === String(row[col] || "")) return;
+    try {
+      await api("updateSheetRow", { sheet: selectedSheet, row: row._row, data: { [col]: val } });
+      setSheetData(rs => rs.map(r => r._row === row._row ? { ...r, [col]: val } : r));
+    } catch(e) { notify("Update failed: " + e.message, "err"); }
+  };
+
+  const doSheetDelete = async (row) => {
+    setConfirmSheetDel(null);
+    try {
+      await api("deleteSheetRow", { sheet: selectedSheet, row: row._row });
+      setSheetData(rs => rs.filter(r => r._row !== row._row));
+      notify("Row deleted");
+    } catch(e) { notify("Delete failed: " + e.message, "err"); }
+  };
+
+  const handleSheetSelect = (sheetName) => {
+    setSelectedSheet(sheetName);
+    setSheetData([]);
+    setSheetHeaders([]);
+    setSheetSearch("");
+    if (sheetName) fetchSheetData(sheetName);
+  };
+
+  const sendReport = async () => {
+    load("report",true);
+    try { await api("weeklyReport"); notify("Weekly report sent via WhatsApp ✓"); }
+    catch(e){notify("Report failed: "+e.message,"err");}
+    load("report",false);
+  };
+
+  const btn  = (bg=C.accent,ex={}) => ({background:bg,color:"#fff",border:"none",borderRadius:6,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",...ex});
+  const ghost = {background:"transparent",color:C.muted,border:`1px solid ${C.border}`,borderRadius:6,padding:"6px 12px",fontSize:12,cursor:"pointer"};
+  const inp  = {background:C.card,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,padding:"7px 10px",fontSize:13,outline:"none",width:"100%",boxSizing:"border-box"};
+  const lbl  = {fontSize:10,color:C.muted,fontWeight:700,marginBottom:4,display:"block",letterSpacing:0.5};
+
+  const filteredRows = rows.filter(r=>!search||Object.values(r).some(v=>String(v||"").toLowerCase().includes(search.toLowerCase())));
+
+  if (!ready) return (
+    <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,color:C.text,padding:16}}>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:28,width:"100%",maxWidth:400}}>
+        <div style={{fontSize:22,fontWeight:800,marginBottom:4}}>📦 Delivery Manager</div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Connect to your Google Apps Script Web App.</div>
+        <label style={lbl}>WEB APP URL</label>
+        <input style={{...inp,marginBottom:12,fontSize:12}} value={urlDraft} onChange={e=>setUrlDraft(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec"/>
+        <label style={lbl}>AUTH TOKEN</label>
+        <input style={{...inp,marginBottom:16}} type="password" value={tokenDraft} onChange={e=>setTokenDraft(e.target.value)} placeholder="Your secret token" onKeyDown={e=>e.key==="Enter"&&saveConfig()}/>
+        <button style={{...btn(),width:"100%",padding:10,fontSize:13,opacity:busy.connect?0.6:1}} onClick={saveConfig} disabled={busy.connect}>
+          {busy.connect?"Connecting…":"Connect"}
+        </button>
+        {connectErr&&<div style={{marginTop:12,background:"#7f1d1d",borderRadius:8,padding:"10px 12px",fontSize:12,color:"#fca5a5",lineHeight:1.7,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>⚠ {connectErr}</div>}
+      </div>
+    </div>
+  );
+
+  const TABS = [{id:"deliveries",label:"Deliveries"},{id:"sheets",label:"Sheets"},{id:"prices",label:"Prices"},{id:"report",label:"Report"}];
+
+  return (
+    <div style={{display:"flex",flexDirection:"column",height:"100vh",background:C.bg,color:C.text,overflow:"hidden"}}>
+      {/* Header - responsive */}
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"9px 14px",borderBottom:`1px solid ${C.border}`,background:C.panel,flexShrink:0,flexWrap:"wrap"}}>
+        <span style={{fontSize:14,fontWeight:800,color:"#f1f5f9",marginRight:4}}>📦</span>
+        <div style={{display:"flex",gap:2}}>
+          {TABS.map(t=>(
+            <button key={t.id} onClick={()=>{setTab(t.id);setPanel(null);}} style={{background:tab===t.id?"rgba(59,130,246,0.15)":"transparent",color:tab===t.id?"#38bdf8":C.muted,border:"none",borderRadius:6,padding:"6px 10px",fontSize:11,fontWeight:tab===t.id?700:400,cursor:"pointer"}}>{t.label}</button>
+          ))}
+        </div>
+        <div style={{flex:1,minWidth:8}}/>
+        {tab==="deliveries"&&<>
+          <input style={{...inp,flex:"1 1 120px",minWidth:100,maxWidth:200,padding:"5px 10px",fontSize:12}} placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/>
+          <button style={ghost} onClick={fetchRows} title="Refresh">{busy.rows?"…":"↻"}</button>
+        </>}
+        {tab==="sheets"&&selectedSheet&&<>
+          <input style={{...inp,flex:"1 1 120px",minWidth:100,maxWidth:200,padding:"5px 10px",fontSize:12}} placeholder="Search…" value={sheetSearch} onChange={e=>setSheetSearch(e.target.value)}/>
+          <button style={ghost} onClick={()=>fetchSheetData(selectedSheet)} title="Refresh">{busy.sheetData?"…":"↻"}</button>
+        </>}
+        {tab==="prices"&&<button style={ghost} onClick={fetchPrices}>{busy.prices?"…":"↻"}</button>}
+        <button style={{...ghost,padding:"6px 10px",color:panel==="settings"?"#38bdf8":C.muted}} onClick={()=>setPanel(p=>p==="settings"?null:"settings")}>⚙</button>
+      </div>
+
+      {/* Floating Action Buttons - visible on all screens */}
+      <div style={{position:"fixed",bottom:24,right:16,display:"flex",flexDirection:"column",gap:12,zIndex:100}}>
+        <button 
+          style={{...btn("#0ea5e9"),padding:"14px 16px",fontSize:14,borderRadius:50,boxShadow:"0 4px 12px rgba(0,0,0,0.3)",opacity:panel==="payment"?0.7:1}} 
+          onClick={()=>setPanel(p=>p==="payment"?null:"payment")}
+          title="Record Payment"
+        >💳</button>
+        <button 
+          style={{...btn(),padding:"14px 16px",fontSize:14,borderRadius:50,boxShadow:"0 4px 12px rgba(0,0,0,0.3)",opacity:panel==="add"?0.7:1}} 
+          onClick={()=>setPanel(p=>p==="add"?null:"add")}
+          title="Add Entries"
+        >⚡</button>
+      </div>
+
+      <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+        <div style={{flex:1,overflow:"auto"}}>
+
+          {tab==="deliveries"&&(
+            busy.rows&&rows.length===0?(
+              <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:200,color:C.muted,fontSize:13}}>Loading from Google Sheet…</div>
+            ):filteredRows.length===0?(
+              <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:300,gap:8,color:C.muted}}>
+                <div style={{fontSize:36}}>📦</div>
+                <div style={{fontWeight:600}}>{search?"No results":"No entries yet"}</div>
+                <div style={{fontSize:12}}>{search?"Try different search":`${rows.length} rows in sheet`}</div>
+              </div>
+):(
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:900}}>
+                <thead>
+                  <tr>
+                    <th style={{background:C.card,color:C.muted,padding:"8px 8px",position:"sticky",top:0,zIndex:2,borderBottom:`1px solid ${C.border}`,width:30,textAlign:"center"}}>#</th>
+                    {headers.map(h=>(
+                      <th key={h} style={{background:C.card,color:C.muted,padding:"8px 10px",position:"sticky",top:0,zIndex:2,textAlign:"left",fontWeight:700,borderBottom:`1px solid ${C.border}`,whiteSpace:"nowrap",minWidth:COL_W[h]||80}}>{h}</th>
+                    ))}
+                    <th style={{background:C.card,position:"sticky",top:0,zIndex:2,borderBottom:`1px solid ${C.border}`,width:32}}/>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.map((row,ri)=>{
+                    const isPay=String(row.Device||"").includes("PAYMENT");
+                    return (
+                      <tr key={row._row} style={{background:isPay?"rgba(34,197,94,0.05)":ri%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
+                        <td style={{padding:"5px 8px",borderBottom:`1px solid rgba(30,58,95,0.4)`,color:C.muted,textAlign:"center",fontSize:11}}>{ri+1}</td>
+                        {headers.map(col=>{
+                          const isEd=editCell?.row===row._row&&editCell?.col===col;
+                          return (
+                            <td key={col} onClick={()=>setEditCell({row:row._row,col})}
+                              style={{padding:isEd?"2px 4px":"5px 10px",borderBottom:`1px solid rgba(30,58,95,0.4)`,maxWidth:COL_W[col]||120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:isPay?C.green:C.text,cursor:"pointer",verticalAlign:"middle"}}
+                              title={String(row[col]||"")}>
+                              {isEd?(
+                                <input autoFocus style={{background:"#334155",color:"#f1f5f9",border:`1px solid ${C.accent}`,borderRadius:4,padding:"3px 6px",fontSize:12,width:"100%",outline:"none"}}
+                                  defaultValue={row[col]||""}
+                                  onBlur={e=>saveCell(row,col,e.target.value)}
+                                  onKeyDown={e=>{if(e.key==="Enter")saveCell(row,col,e.target.value);if(e.key==="Escape")setEditCell(null);}}/>
+                              ):String(row[col]||"")}
+                            </td>
+                          );
+                        })}
+                        <td style={{padding:"5px 4px",borderBottom:`1px solid rgba(30,58,95,0.4)`,textAlign:"center"}}>
+                          {confirmDel===row._row?(
+                            <div style={{display:"flex",gap:3}}>
+                              <button onClick={()=>doDelete(row)} style={{background:C.red,border:"none",color:"#fff",borderRadius:4,padding:"2px 6px",fontSize:10,cursor:"pointer",fontWeight:700}}>Yes</button>
+                              <button onClick={()=>setConfirmDel(null)} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,padding:"2px 5px",fontSize:10,cursor:"pointer"}}>No</button>
+                            </div>
+                          ):(
+                            <button onClick={()=>setConfirmDel(row._row)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"2px 4px"}}>X</button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )
+          )}
+
+          {tab==="sheets"&&(
+            <div style={{display:"flex",flexDirection:"column",height:"100%"}}>
+              {/* Sheet selector */}
+              <div style={{padding:12,borderBottom:`1px solid ${C.border}`,background:C.panel,flexShrink:0}}>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <div style={{flex:"1 1 150px",minWidth:120}}>
+                    <label style={lbl}>SELECT SHEET</label>
+                    <select style={{...inp,cursor:"pointer"}} value={selectedSheet||""} onChange={e=>handleSheetSelect(e.target.value)}>
+                      <option value="">Choose a sheet...</option>
+                      <optgroup label="Sellers">
+                        {sheets.sellers.map(s=>(
+                          <option key={s.name} value={s.name}>{s.name} (-{s.deduction})</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Buyers">
+                        {sheets.buyers.map(b=>(
+                          <option key={b.name} value={b.name}>{b.name}</option>
+                        ))}
+                      </optgroup>
+                    </select>
+                  </div>
+                  {selectedSheet && (
+                    <div style={{alignSelf:"flex-end",fontSize:12,color:C.muted}}>
+                      {sheetData.length} rows
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Sheet data table */}
+              <div style={{flex:1,overflow:"auto"}}>
+                {!selectedSheet ? (
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:300,gap:8,color:C.muted}}>
+                    <div style={{fontSize:36}}>📋</div>
+                    <div style={{fontWeight:600}}>Select a Sheet</div>
+                    <div style={{fontSize:12}}>Choose a seller or buyer sheet to view and edit</div>
+                  </div>
+                ) : busy.sheetData && sheetData.length === 0 ? (
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:200,color:C.muted,fontSize:13}}>Loading sheet data...</div>
+                ) : sheetData.length === 0 ? (
+                  <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:300,gap:8,color:C.muted}}>
+                    <div style={{fontSize:36}}>📋</div>
+                    <div style={{fontWeight:600}}>No data in {selectedSheet}</div>
+                    <div style={{fontSize:12}}>This sheet is empty</div>
+                  </div>
+                ) : (
+                  (() => {
+                    const filteredSheetRows = sheetData.filter(r => !sheetSearch || Object.values(r).some(v => String(v || "").toLowerCase().includes(sheetSearch.toLowerCase())));
+                    return filteredSheetRows.length === 0 ? (
+                      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:300,gap:8,color:C.muted}}>
+                        <div style={{fontSize:36}}>🔍</div>
+                        <div style={{fontWeight:600}}>No results</div>
+                        <div style={{fontSize:12}}>Try a different search term</div>
+                      </div>
+                    ) : (
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,minWidth:600}}>
+                        <thead>
+                          <tr>
+                            <th style={{background:C.card,color:C.muted,padding:"8px 8px",position:"sticky",top:0,zIndex:2,borderBottom:`1px solid ${C.border}`,width:30,textAlign:"center"}}>#</th>
+                            {sheetHeaders.map(h=>(
+                              <th key={h} style={{background:C.card,color:C.muted,padding:"8px 10px",position:"sticky",top:0,zIndex:2,textAlign:"left",fontWeight:700,borderBottom:`1px solid ${C.border}`,whiteSpace:"nowrap",minWidth:80}}>{h}</th>
+                            ))}
+                            <th style={{background:C.card,position:"sticky",top:0,zIndex:2,borderBottom:`1px solid ${C.border}`,width:32}}/>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredSheetRows.map((row,ri)=>{
+                            const isPay = String(row.Device||row.Type||"").toLowerCase().includes("payment");
+                            return (
+                              <tr key={row._row} style={{background:isPay?"rgba(34,197,94,0.05)":ri%2===0?"transparent":"rgba(255,255,255,0.015)"}}>
+                                <td style={{padding:"5px 8px",borderBottom:`1px solid rgba(30,58,95,0.4)`,color:C.muted,textAlign:"center",fontSize:11}}>{ri+1}</td>
+                                {sheetHeaders.map(col=>{
+                                  const isEd = editSheetCell?.row===row._row && editSheetCell?.col===col;
+                                  return (
+                                    <td key={col} onClick={()=>setEditSheetCell({row:row._row,col})}
+                                      style={{padding:isEd?"2px 4px":"5px 10px",borderBottom:`1px solid rgba(30,58,95,0.4)`,maxWidth:150,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:isPay?C.green:C.text,cursor:"pointer",verticalAlign:"middle"}}
+                                      title={String(row[col]||"")}>
+                                      {isEd?(
+                                        <input autoFocus style={{background:"#334155",color:"#f1f5f9",border:`1px solid ${C.accent}`,borderRadius:4,padding:"3px 6px",fontSize:12,width:"100%",outline:"none"}}
+                                          defaultValue={row[col]||""}
+                                          onBlur={e=>saveSheetCell(row,col,e.target.value)}
+                                          onKeyDown={e=>{if(e.key==="Enter")saveSheetCell(row,col,e.target.value);if(e.key==="Escape")setEditSheetCell(null);}}/>
+                                      ):String(row[col]||"")}
+                                    </td>
+                                  );
+                                })}
+                                <td style={{padding:"5px 4px",borderBottom:`1px solid rgba(30,58,95,0.4)`,textAlign:"center"}}>
+                                  {confirmSheetDel===row._row?(
+                                    <div style={{display:"flex",gap:3}}>
+                                      <button onClick={()=>doSheetDelete(row)} style={{background:C.red,border:"none",color:"#fff",borderRadius:4,padding:"2px 6px",fontSize:10,cursor:"pointer",fontWeight:700}}>Yes</button>
+                                      <button onClick={()=>setConfirmSheetDel(null)} style={{background:"transparent",border:`1px solid ${C.border}`,color:C.muted,borderRadius:4,padding:"2px 5px",fontSize:10,cursor:"pointer"}}>No</button>
+                                    </div>
+                                  ):(
+                                    <button onClick={()=>setConfirmSheetDel(row._row)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:13,padding:"2px 4px"}}>X</button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    );
+                  })()
+                )}
+              </div>
+            </div>
+          )}
+
+          {tab==="prices"&&(
+            <div style={{padding:16,maxWidth:680}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                <span style={{fontWeight:700,fontSize:14}}>Price List <span style={{fontSize:12,color:C.muted,fontWeight:400}}>({prices.length} devices)</span></span>
+                <button style={{...btn(C.green),opacity:busy.sync?0.6:1}} onClick={syncPrices} disabled={busy.sync}>{busy.sync?"Syncing…":"⬆ Sync to All Sellers"}</button>
+              </div>
+              <div style={{background:C.card,borderRadius:8,padding:14,border:`1px solid ${C.border}`,marginBottom:14}}>
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:10,letterSpacing:0.5}}>ADD / EDIT DEVICE</div>
+                <div style={{display:"flex",gap:8,alignItems:"flex-end",flexWrap:"wrap"}}>
+                  <div style={{flex:"2 1 180px"}}>
+                    <label style={lbl}>DEVICE NAME</label>
+                    <input style={inp} value={pf.device} onChange={e=>setPf(p=>({...p,device:e.target.value}))} placeholder="e.g. IPhone 17 256gb"/>
+                  </div>
+                  <div style={{flex:"1 1 90px"}}>
+                    <label style={lbl}>PRICE (€)</label>
+                    <input style={inp} type="number" value={pf.price} onChange={e=>setPf(p=>({...p,price:e.target.value}))} placeholder="0"/>
+                  </div>
+                  <div style={{display:"flex",gap:4,flexShrink:0}}>
+                    {["add","update"].map(m=>(
+                      <button key={m} onClick={()=>setPf(p=>({...p,mode:m}))} style={{padding:"7px 10px",border:`1px solid ${pf.mode===m?C.accent:C.border}`,borderRadius:6,background:pf.mode===m?"rgba(59,130,246,0.15)":"transparent",color:pf.mode===m?C.accent:C.muted,fontSize:11,cursor:"pointer",fontWeight:700}}>
+                        {m==="add"?"Add":"Edit"}
+                      </button>
+                    ))}
+                    <button style={{...btn(),opacity:busy.price?0.6:1}} onClick={submitPrice} disabled={busy.price}>{busy.price?"…":"Save"}</button>
+                  </div>
+                </div>
+                {pf.device&&prices.find(p=>p.device.toLowerCase()===pf.device.toLowerCase())&&pf.mode==="add"&&(
+                  <div style={{marginTop:8,fontSize:11,color:C.yellow}}>⚠ Device exists — switch to Edit mode.</div>
+                )}
+              </div>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                <thead>
+                  <tr>
+                    <th style={{background:C.card,color:C.muted,padding:"8px 12px",textAlign:"left",borderBottom:`1px solid ${C.border}`,fontWeight:700}}>Device</th>
+                    <th style={{background:C.card,color:C.muted,padding:"8px 12px",textAlign:"right",borderBottom:`1px solid ${C.border}`,fontWeight:700,width:80}}>Price</th>
+                    <th style={{background:C.card,color:C.muted,padding:"8px 12px",borderBottom:`1px solid ${C.border}`,width:70}}/>
+                  </tr>
+                </thead>
+                <tbody>
+                  {prices.map((p,i)=>(
+                    <tr key={i}>
+                      <td style={{padding:"7px 12px",borderBottom:`1px solid rgba(30,58,95,0.4)`,color:C.text}}>{p.device}</td>
+                      <td style={{padding:"7px 12px",borderBottom:`1px solid rgba(30,58,95,0.4)`,color:C.green,textAlign:"right",fontWeight:600}}>€{p.price}</td>
+                      <td style={{padding:"7px 12px",borderBottom:`1px solid rgba(30,58,95,0.4)`,textAlign:"right"}}>
+                        <button onClick={()=>setPf({device:p.device,price:String(p.price),mode:"update"})} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:12,marginRight:6}}>✎</button>
+                        <button onClick={()=>deletePrice(p.device)} style={{background:"none",border:"none",color:C.red,cursor:"pointer",fontSize:12}}>✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {tab==="report"&&(
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"calc(100vh - 48px)",gap:14,padding:20,textAlign:"center"}}>
+              <div style={{fontSize:40}}>📊</div>
+              <div style={{fontSize:17,fontWeight:800}}>Weekly Report</div>
+              <div style={{fontSize:13,color:C.muted,maxWidth:360,lineHeight:1.6}}>Generates last week's summary (Mon–Sun) and sends it to your WhatsApp via Twilio.</div>
+              <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:12,maxWidth:340,fontSize:12,color:C.muted,lineHeight:1.7}}>
+                Includes: units per buyer & seller · totals at sell prices · totals at cost prices (deductions applied)
+              </div>
+              <button style={{...btn(C.green),padding:"11px 28px",fontSize:14,opacity:busy.report?0.6:1}} onClick={sendReport} disabled={busy.report}>
+                {busy.report?"⏳ Generating…":"📲 Send WhatsApp Report"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {panel&&(
+          <div style={{width:370,background:C.panel,borderLeft:`1px solid ${C.border}`,display:"flex",flexDirection:"column",flexShrink:0,overflow:"hidden"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 16px",borderBottom:`1px solid ${C.border}`,flexShrink:0}}>
+              <span style={{fontSize:13,fontWeight:700}}>
+                {panel==="add"?"⚡ AI Bulk Extraction":panel==="payment"?"💳 Record Payment":"⚙ Settings"}
+              </span>
+              <button onClick={()=>setPanel(null)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:18,lineHeight:1}}>✕</button>
+            </div>
+            <div style={{flex:1,padding:14,overflow:"auto",display:"flex",flexDirection:"column",gap:11}}>
+
+              {panel==="add"&&(<>
+                <div>
+                  <label style={lbl}>PASTE DELIVERY TEXT (ANY FORMAT, MULTIPLE PARCELS OK)</label>
+                  <textarea style={{...inp,resize:"vertical",minHeight:140,lineHeight:1.6,fontFamily:"inherit",fontSize:12}}
+                    value={aiText} onChange={e=>{setAiText(e.target.value);setAiResults(null);}}
+                    placeholder={"Paste WhatsApp messages, tracking info,\nor any messy text — handles many parcels at once."}/>
+                </div>
+                {!aiResults?(
+                  <button style={{...btn(),padding:"9px",fontSize:13,opacity:busy.ai?0.6:1}} onClick={extractAI} disabled={busy.ai}>
+                    {busy.ai?"⏳ Extracting…":"⚡ Extract All Parcels"}
+                  </button>
+                ):(<>
+                  <div style={{fontSize:11,color:C.muted,fontWeight:700}}>{aiResults.length} PARCEL{aiResults.length!==1?"S":""} FOUND — EDIT IF NEEDED</div>
+                  <div style={{display:"flex",flexDirection:"column",gap:10,maxHeight:440,overflowY:"auto"}}>
+                    {aiResults.map((e,i)=>(
+                      <div key={i} style={{background:C.bg,borderRadius:8,padding:12,border:`1px solid ${C.border}`}}>
+                        <div style={{fontSize:10,color:C.accent,fontWeight:700,marginBottom:8}}>PARCEL {i+1}</div>
+                        {["Date","Device","Buyer","Seller","Tracking","Address"].map(k=>(
+                          <div key={k} style={{marginBottom:6}}>
+                            <label style={{...lbl,fontSize:9}}>{k}</label>
+                            <input style={{...inp,padding:"4px 8px",fontSize:12}} value={e[k]||""}
+                              onChange={ev=>setAiResults(p=>p.map((x,idx)=>idx===i?{...x,[k]:ev.target.value}:x))}/>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button style={{...btn(C.green),flex:1,opacity:busy.confirm?0.6:1}} onClick={confirmEntries} disabled={busy.confirm}>
+                      {busy.confirm?"Saving…":"✓ Save All to Google Sheet"}
+                    </button>
+                    <button style={ghost} onClick={()=>setAiResults(null)}>Re-extract</button>
+                  </div>
+                </>)}
+              </>)}
+
+              {panel==="payment"&&(<>
+                <div>
+                  <label style={lbl}>DIRECTION</label>
+                  <div style={{display:"flex",gap:6}}>
+                    {["to","from"].map(d=>(
+                      <button key={d} onClick={()=>setPay(p=>({...p,dir:d,person:""}))} style={{flex:1,padding:8,border:`1px solid ${pay.dir===d?C.accent:C.border}`,borderRadius:6,background:pay.dir===d?"rgba(59,130,246,0.15)":C.bg,color:pay.dir===d?C.accent:C.muted,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                        {d==="to"?"⬆ To Seller":"⬇ From Buyer"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label style={lbl}>{pay.dir==="to"?"SELLER":"BUYER"}</label>
+                  <select style={{...inp,cursor:"pointer"}} value={pay.person} onChange={e=>setPay(p=>({...p,person:e.target.value}))}>
+                    <option value="">Select…</option>
+                    {(pay.dir==="to"?sheets.sellers:sheets.buyers).map(s=>(
+                      <option key={s.name} value={s.name}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <div style={{flex:1}}>
+                    <label style={lbl}>AMOUNT</label>
+                    <input style={inp} type="number" value={pay.amount} onChange={e=>setPay(p=>({...p,amount:e.target.value}))} placeholder="0"/>
+                  </div>
+                  <div style={{flex:1}}>
+                    <label style={lbl}>CURRENCY</label>
+                    <div style={{display:"flex",gap:4,height:36}}>
+                      {["EUR","PKR"].map(c=>(
+                        <button key={c} onClick={()=>setPay(p=>({...p,currency:c}))} style={{flex:1,border:`1px solid ${pay.currency===c?C.accent:C.border}`,borderRadius:6,background:pay.currency===c?"rgba(59,130,246,0.15)":C.bg,color:pay.currency===c?C.accent:C.muted,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                          {c==="EUR"?"€ EUR":"₨ PKR"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label style={lbl}>NOTE (OPTIONAL)</label>
+                  <input style={inp} value={pay.note} onChange={e=>setPay(p=>({...p,note:e.target.value}))} placeholder="Reference or description…"/>
+                </div>
+                <button style={{...btn(C.green),padding:"10px",fontSize:13,opacity:busy.pay?0.6:1}} onClick={submitPayment} disabled={busy.pay}>
+                  {busy.pay?"Recording…":"✓ Record Payment"}
+                </button>
+              </>)}
+
+              {panel==="settings"&&(<>
+                <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.5}}>CONNECTION</div>
+                <div>
+                  <label style={lbl}>WEB APP URL</label>
+                  <input style={{...inp,fontSize:11}} value={urlDraft} onChange={e=>setUrlDraft(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec"/>
+                </div>
+                <div>
+                  <label style={lbl}>AUTH TOKEN</label>
+                  <input style={inp} type="password" value={tokenDraft} onChange={e=>setTokenDraft(e.target.value)} placeholder="Secret token"/>
+                </div>
+                <button style={{...btn(),opacity:busy.connect?0.6:1}} onClick={saveConfig} disabled={busy.connect}>
+                  {busy.connect?"Reconnecting…":"Save & Reconnect"}
+                </button>
+                {connectErr&&<div style={{background:"#7f1d1d",borderRadius:8,padding:"10px 12px",fontSize:12,color:"#fca5a5",lineHeight:1.6,whiteSpace:"pre-wrap"}}>{connectErr}</div>}
+                <div style={{background:C.bg,borderRadius:8,padding:12,border:`1px solid ${C.border}`,marginTop:4}}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:8,letterSpacing:0.5}}>CONNECTED SHEETS</div>
+                  <div style={{fontSize:12,marginBottom:4}}><span style={{color:C.muted}}>Sellers: </span>{sheets.sellers.map(s=>`${s.name}(-€${s.deduction})`).join(", ")||"—"}</div>
+                  <div style={{fontSize:12}}><span style={{color:C.muted}}>Buyers: </span>{sheets.buyers.map(b=>b.name).join(", ")||"—"}</div>
+                </div>
+                <div style={{background:C.bg,borderRadius:8,padding:12,border:`1px solid ${C.border}`}}>
+                  <div style={{fontSize:10,color:C.muted,fontWeight:700,marginBottom:8,letterSpacing:0.5}}>STATS</div>
+                  <div style={{fontSize:12,marginBottom:4}}><span style={{color:C.muted}}>Total rows: </span>{rows.length}</div>
+                  <div style={{fontSize:12}}><span style={{color:C.muted}}>Price list devices: </span>{prices.length}</div>
+                </div>
+                <button style={{...ghost,color:C.red,borderColor:"#7f1d1d",fontSize:11,width:"100%",marginTop:4}}
+                  onClick={()=>{storage.del("dm-config-v1");setReady(false);setToken("");setGasUrl("");setUrlDraft("");setTokenDraft("");}}>
+                  Disconnect
+                </button>
+              </>)}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {toast&&(
+        <div style={{position:"fixed",bottom:18,right:18,background:toast.type==="err"?"#7f1d1d":"#14532d",color:toast.type==="err"?"#fca5a5":"#86efac",padding:"10px 16px",borderRadius:8,fontSize:13,fontWeight:600,zIndex:999,boxShadow:"0 4px 20px rgba(0,0,0,0.5)"}}>
+          {toast.type==="err"?"⚠ ":"✓ "}{toast.msg}
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
