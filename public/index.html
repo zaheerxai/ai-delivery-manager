@@ -155,13 +155,13 @@ Today: ${todayStr()}
 Rules:
 - Extract ALL separate parcels, even if many in one paste.
 - Tracking: LK817841531IE format or 9-digit numbers.
-- Seller: guess from WhatsApp sender e.g. "[4/24, 2:04 PM] Zaheer:" → Zaheer.
+- Seller: guess from WhatsApp sender e.g. "[4/24(this you will use for Date of the delivery, year should be current), 2:04 PM] Zaheer:" → Zaheer.
 - Address: reconstruct uppercase single line.
 - Device: match exactly to price list.
 - "APARTMENT 157" or "D07KN36" in address → buyer is Shoaib.
 Return ONLY valid JSON array, no markdown:
 [{"Date":"D/M/YY","Device":"exact","Buyer":"name","Seller":"name","Tracking":"number","Address":"FULL ADDRESS"}]`;
-      const res = await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:2000,system:sys,messages:[{role:"user",content:aiText}]})});
+      const res = await fetch("/api/extract", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"gemini-2.0-flash",max_tokens:2000,system:sys,messages:[{role:"user",content:aiText}]})});
       const d = await res.json();
       const raw = d.content?.find(b=>b.type==="text")?.text||"[]";
       const parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
