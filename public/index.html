@@ -214,9 +214,9 @@ Return ONLY valid JSON array, no markdown:
     catch(e){notify(e.message,"err");}
   };
 
-const syncPrices = async () => {
+  const syncPrices = async () => {
     load("sync",true);
-    try { const r=await api("syncPrices"); const ok=r.sync.filter(s=>s.status==="ok").length; notify(`Synced to ${ok}/${r.sync.length} seller sheets ✓`); }
+    try { const r=await api("syncPrices"); const ok=r.sync.filter(s=>s.status==="ok").length; notify(`Updated prices in ${ok}/${r.sync.length} sheets ✓`); }
     catch(e){notify("Sync failed: "+e.message,"err");}
     load("sync",false);
   };
@@ -551,6 +551,7 @@ const syncPrices = async () => {
                   ))}
                 </tbody>
               </table>
+              <button style={{...btn("#c52d22"),opacity:busy.sync?0.6:1,width:"100%",marginTop:12}} onClick={syncPrices} disabled={busy.sync}>{busy.sync?"Updating…":"Update Prices Lists"}</button>
             </div>
           )}
 
