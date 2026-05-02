@@ -67,7 +67,7 @@ function App() {
 
   const [aiText, setAiText]       = useState("");
   const [aiResults, setAiResults] = useState(null);
-  const [pay, setPay] = useState({ person:"", amount:"", currency:"EUR", note:"", dir:"to" });
+  const [pay, setPay] = useState({ person:"", amount:"", currency:"EUR", note:"", dir:"to", date: todayStr() });
   const [pf,  setPf]  = useState({ device:"", price:"", mode:"add" });
 
   // Individual sheet viewer state
@@ -714,6 +714,18 @@ function App() {
                     ))}
                   </div>
                 </div>
+                <div>
+  <label style={lbl}>DATE</label>
+  <input 
+    type="date" 
+    style={{...inp, fontSize:12, colorScheme:"dark"}}
+    value={pay.date ? (() => { const [d,m,y] = pay.date.split("/"); return `20${y}-${m.padStart(2,"0")}-${d.padStart(2,"0")}`; })() : ""}
+    onChange={e => {
+      const [y,m,d] = e.target.value.split("-");
+      setPay(p => ({...p, date: `${parseInt(d)}/${parseInt(m)}/${y.slice(2)}`}));
+    }}
+  />
+</div>
                 <div>
                   <label style={lbl}>{pay.dir==="to"?"SELLER":"BUYER"}</label>
                   <select style={{...inp,cursor:"pointer"}} value={pay.person} onChange={e=>setPay(p=>({...p,person:e.target.value}))}>
