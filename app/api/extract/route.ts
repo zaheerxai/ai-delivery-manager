@@ -27,20 +27,26 @@ RULES:
 6. BUYER: if address has "APARTMENT 157" or "D07KN36" → "Shoaib".
 7. ADDRESS: full address on one line in UPPERCASE.
 
-Return ONLY a JSON array. No markdown. No explanation. Start with [ end with ].
-Example: [{"Date":"29/4/26","Device":"IPhone 17 Pro Max 256gb","Buyer":"Shoaib","Seller":"Talha","Tracking":"LK817841390IE","Address":"APARTMENT 157 THE OLD DISTILLERY ANNE STREET NORTH DUBLIN 7 D07 KN36"}]
+Return an array of objects matching this schema exactly:
+[{"Date":"29/4/26","Device":"IPhone 17 Pro Max 256gb","Buyer":"Shoaib","Seller":"Talha","Tracking":"LK817841390IE","Address":"APARTMENT 157 THE OLD DISTILLERY ANNE STREET NORTH DUBLIN 7 D07 KN36"}]
 
 INPUT:
 ${text}`;
 
+    // CHANGE 1: Switched to 1.5-flash to avoid the limit: 0 quota error on 2.0
     const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0, maxOutputTokens: 2048 },
+          generationConfig: { 
+            temperature: 0, 
+            maxOutputTokens: 2048,
+            // CHANGE 2: Force native JSON output
+            responseMimeType: "application/json" 
+          },
         }),
       }
     );
@@ -49,18 +55,22 @@ ${text}`;
 
     if (!resp.ok) {
       console.error("Gemini error:", JSON.stringify(data));
+      // Added specific handling for the 429 quota error
+      if (resp.status === 429) {
+          return NextResponse.json({ error: "API Rate limit exceeded. Retrying shortly." }, { status: 429 });
+      }
       return NextResponse.json({ error: data?.error?.message || "Gemini error" }, { status: 500 });
     }
 
-    let raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+    const raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
     console.log("Gemini raw:", raw.slice(0, 500));
 
-    raw = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-
-    // Validate JSON
-    try { JSON.parse(raw); } catch {
-      console.error("Invalid JSON from Gemini:", raw.slice(0, 300));
-      raw = "[]";
+    // CHANGE 3: Simplified validation since responseMimeType guarantees JSON without markdown
+    try { 
+        JSON.parse(raw); 
+    } catch {
+        console.error("Invalid JSON from Gemini:", raw.slice(0, 300));
+        return NextResponse.json({ error: "Failed to parse API response" }, { status: 500 });
     }
 
     return NextResponse.json({ content: [{ type: "text", text: raw }] });
