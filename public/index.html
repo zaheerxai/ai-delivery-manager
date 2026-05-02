@@ -39,6 +39,11 @@ const storage = {
 };
 
 function App() {
+  // Report state
+  const [repDisplay, setRepDisplay] = useState("");
+  const [repStart, setRepStart] = useState("");
+  const [repEnd, setRepEnd] = useState("");
+  
   const [gasUrl, setGasUrl]         = useState("");
   const [token, setToken]           = useState("");
   const [urlDraft, setUrlDraft]     = useState("");
@@ -263,11 +268,33 @@ function App() {
     if (sheetName) fetchSheetData(sheetName);
   };
 
-  const sendReport = async () => {
-    load("report",true);
-    try { await api("weeklyReport"); notify("Weekly report sent via WhatsApp ✓"); }
-    catch(e){notify("Report failed: "+e.message,"err");}
-    load("report",false);
+  const generateReport = async (isCustom) => {
+    if (isCustom && (!repStart || !repEnd)) {
+        notify("Please select both Start and End dates", "err");
+        return;
+    }
+    
+    load("report", true);
+    setRepDisplay(""); // Clear old report
+    
+    try {
+      const res = await api("generateReport", { 
+          isCustom: isCustom, 
+          startDate: repStart, 
+          endDate: repEnd 
+      });
+      
+      setRepDisplay(res.reportText);
+      
+      if (res.sent) {
+          notify("Report generated & WhatsApp sent ✓");
+      } else {
+          notify(`Report displayed (WhatsApp skipped: ${res.twilioStatus})`);
+      }
+    } catch(e) {
+        notify("Report generation failed: " + e.message, "err");
+    }
+    load("report", false);
   };
 
   const btn  = (bg=C.accent,ex={}) => ({background:bg,color:"#fff",border:"none",borderRadius:6,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",...ex});
