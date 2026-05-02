@@ -708,7 +708,7 @@ function App() {
                   <label style={lbl}>DIRECTION</label>
                   <div style={{display:"flex",gap:6}}>
                     {["to","from"].map(d=>(
-                      <button key={d} onClick={()=>setPay(p=>({...p,dir:d,person:""}))} style={{flex:1,padding:8,border:`1px solid ${pay.dir===d?C.accent:C.border}`,borderRadius:6,background:pay.dir===d?"rgba(59,130,246,0.15)":C.bg,color:pay.dir===d?C.accent:C.muted,cursor:"pointer",fontSize:12,fontWeight:700}}>
+                      <button key={d} onClick={()=>setPay(p=>({...p, dir:d, person:"", date: todayStr()}))} style={{flex:1,padding:8,border:`1px solid ${pay.dir===d?C.accent:C.border}`,borderRadius:6,background:pay.dir===d?"rgba(59,130,246,0.15)":C.bg,color:pay.dir===d?C.accent:C.muted,cursor:"pointer",fontSize:12,fontWeight:700}}>
                         {d==="to"?"⬆ To Seller":"⬇ From Buyer"}
                       </button>
                     ))}
