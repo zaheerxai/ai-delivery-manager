@@ -142,26 +142,18 @@ function App() {
   };
 
 
-
   const extractAI = async () => {
     if (!aiText.trim()) return;
     load("ai", true);
     setAiResults(null);
     try {
-      // Build device list with exact names for matching
-      const deviceList = prices.map(p => p.device).join(", ");
+      // Build device reference with ALL variants clearly listed
+      const deviceReference = prices.map(p => p.device).join(" | ");
       
-      // Build seller names list (just the names, no extra text)
-      const sellerNames = sheets.sellers.map(s => s.name).join(", ");
-      
-      // Build buyer names list
-      const buyerNames = sheets.buyers.map(b => b.name).join(", ");
-      
-      // Create detailed device reference
-      const deviceReference = prices.map((p, i) => `${i + 1}. "${p.device}"`).join("\n");
-      
-      // Create detailed seller reference
-      const sellerReference = sheets.sellers.map((s, i) => `${i + 1}. "${s.name}"`).join("\n");
+      // Build seller reference
+      const sellerReference = sheets.sellers.map(s => s.name).join(" | ");
+
+      const buyerReference = sheets.buyers.map(b => b.name).join(", ");
       
       const sys = `You are a parcel data extractor from WhatsApp messages.
 
@@ -171,7 +163,7 @@ function App() {
   AVAILABLE SELLERS (use EXACT names only):
   ${sellerReference}
 
-  KNOWN BUYERS: ${buyerNames}
+  KNOWN BUYERS: ${buyerReference}
 
   EXTRACTION INSTRUCTIONS:
   1. Each message starting with [TIME] is ONE parcel
@@ -224,7 +216,8 @@ function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: "gemini-2.0-flash",
-          max_tokens: 4000,
+          max_tokens: 2000,
+          temperature: 0,
           system: sys,
           messages: [{ role: "user", content: aiText }]
         })
@@ -233,276 +226,20 @@ function App() {
       const d = await res.json();
       let raw = d.content?.find(b => b.type === "text")?.text || "[]";
       
-      console.log("Gemini raw response:", raw.slice(0, 500));
-      
-      // Clean markdown fences
       raw = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
       
-      let parsed = [];
-      try {
-        parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) {
-          parsed = [parsed];
-        }
-      } catch (e) {
-        console.error("JSON parse error:", e);
-        console.error("Failed to parse:", raw.slice(0, 300));
-        notify("Gemini returned invalid JSON. Check console.", "err");
-        load("ai", false);
-        return;
-      }
-
-      // Validate and normalize seller/device names
-      const validSellers = sheets.sellers.map(s => s.name);
-      const validDevices = prices.map(p => p.device);
+      let parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) parsed = [parsed];
       
-      parsed = parsed.map(parcel => {
-        // Try to match seller to available sellers (case-insensitive)
-        let seller = parcel.Seller || "";
-        if (seller && !validSellers.includes(seller)) {
-          const lowerSeller = seller.toLowerCase();
-          const match = validSellers.find(s => s.toLowerCase().includes(lowerSeller) || lowerSeller.includes(s.toLowerCase()));
-          seller = match || "";
-        }
-        
-        // Ensure device is valid
-        let device = parcel.Device || "";
-        if (device && !validDevices.includes(device)) {
-          device = "";
-        }
-        
-        return {
-          Date: parcel.Date || "",
-          Seller: seller,
-          Tracking: parcel.Tracking || "",
-          Device: device,
-          Buyer: parcel.Buyer || "Shoaib",
-          Address: parcel.Address || ""
-        };
-      });
-
-      if (parsed.length === 0) {
-        notify("No parcels extracted. Try a different format.", "err");
-      } else {
-        setAiResults(parsed);
-        notify(`${parsed.length} parcel${parsed.length !== 1 ? "s" : ""} extracted ✓`);
-      }
+      setAiResults(parsed);
+      notify(`${parsed.length} parcel${parsed.length !== 1 ? "s" : ""} extracted ✓`);
     } catch (e) {
-      console.error("Extraction error:", e);
       notify("Extraction failed: " + e.message, "err");
     }
     load("ai", false);
   };
 
 
-
-  // const extractAI = async () => {
-  //   if (!aiText.trim()) return;
-  //   load("ai", true);
-  //   setAiResults(null);
-  //   try {
-  //     const priceList = prices.reduce((acc, p) => {
-  //       acc[p.device.toLowerCase()] = p.device;
-  //       return acc;
-  //     }, {});
-      
-  //     const priceStr = prices.map(p => `"${p.device}":€${p.price}`).join(", ");
-  //     const sellers = sheets.sellers.map(s => s.name).join(", ");
-  //     const buyers = sheets.buyers.map(b => b.name).join(", ");
-      
-  //     const sys = `You are a parcel data extractor. Extract ALL parcels from WhatsApp text.
-
-  // Price list devices (match exactly): ${Object.values(priceList).join(", ")}
-  // Known sellers: ${sellers}
-  // Known buyers: ${buyers}
-  // Default buyer: Shoaib
-
-  // PARSING RULES:
-  // 1. Each timestamp like "[4/29, 1:03 PM]" marks the START of a new parcel
-  // 2. All text after that timestamp until the NEXT timestamp is ONE parcel
-  // 3. Extract fields in this order:
-  //   - Date: From timestamp [M/D, ...] → convert to D/M/YY (use 26 for year 2026)
-  //   - Seller: Name right after timestamp before colon (e.g., "Talha Seller" → "Talha Seller")
-  //   - Tracking: Code like LK817841390IE (letters+numbers)
-  //   - Device: Exact device name from price list (e.g., "Apple 17 pro max-256")
-  //   - Buyer: "Shoaib" if address has "APARTMENT 157" or "D07KN36", else use full address to guess
-  //   - Address: Full address uppercase, single line
-
-  // EXAMPLE INPUT:
-  // [4/29, 1:03 PM] Talha Seller: LK817841390IE
-  // Apartment 157 The Old Distillery Anne street north Dublin 7 D07 KN36
-  // Apple 17 pro max-256
-  // Delivered
-
-  // EXAMPLE OUTPUT for above:
-  // {"Date":"29/4/26","Seller":"Talha Seller","Tracking":"LK817841390IE","Device":"Apple 17 pro max-256","Buyer":"Shoaib","Address":"APARTMENT 157 THE OLD DISTILLERY ANNE STREET NORTH DUBLIN 7 D07 KN36"}
-
-  // IMPORTANT: 
-  // - Return ONLY a valid JSON array
-  // - Each parcel is a separate object
-  // - No markdown, no backticks, no explanation
-  // - Start with [ and end with ]
-  // - Parse EVERY timestamp as a separate parcel`;
-
-  //     const res = await fetch("/api/extract", {
-  //       method: "POST",
-  //       headers: { "Content-Type": "application/json" },
-  //       body: JSON.stringify({
-  //         model: "gemini-2.0-flash",
-  //         max_tokens: 4000,
-  //         system: sys,
-  //         messages: [{ role: "user", content: aiText }]
-  //       })
-  //     });
-
-  //     const d = await res.json();
-  //     let raw = d.content?.find(b => b.type === "text")?.text || "[]";
-      
-  //     // Clean markdown fences
-  //     raw = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-      
-  //     let parsed = [];
-  //     try {
-  //       parsed = JSON.parse(raw);
-  //       if (!Array.isArray(parsed)) {
-  //         parsed = [parsed];
-  //       }
-  //     } catch (e) {
-  //       console.error("Gemini returned invalid JSON:", raw.slice(0, 500));
-  //       notify("Gemini returned invalid JSON. Check console logs.", "err");
-  //       load("ai", false);
-  //       return;
-  //     }
-
-  //     // Fallback: Manual regex extraction if Gemini completely fails
-  //     if (!parsed || parsed.length === 0) {
-  //       console.warn("Gemini returned empty, using regex fallback");
-  //       const timestampRegex = /\[(\d+)\/(\d+),\s*(\d+):(\d+)\s*([AP]M)\]\s*([^:]+):\s*/g;
-  //       const matches = [...aiText.matchAll(timestampRegex)];
-        
-  //       if (matches.length > 0) {
-  //         parsed = matches.map((match, idx) => {
-  //           const month = parseInt(match[1]);
-  //           const day = parseInt(match[2]);
-  //           const seller = match[6].trim();
-            
-  //           // Get text from this match to next match (or end)
-  //           const startPos = match.index + match[0].length;
-  //           const nextMatch = matches[idx + 1];
-  //           const endPos = nextMatch ? nextMatch.index : aiText.length;
-  //           const parcelText = aiText.substring(startPos, endPos);
-            
-  //           // Extract fields
-  //           const trackingMatch = parcelText.match(/LK\d+IE/);
-  //           const tracking = trackingMatch ? trackingMatch[0] : "";
-            
-  //           const deviceMatch = parcelText.match(new RegExp(Object.values(priceList).join("|"), "i"));
-  //           const device = deviceMatch ? deviceMatch[0] : "";
-            
-  //           const hasAddress = parcelText.includes("APARTMENT 157") || parcelText.includes("D07KN36");
-  //           const buyer = hasAddress ? "Shoaib" : "Shoaib";
-            
-  //           const addressMatch = parcelText.match(/(.+(?:Dublin|D07KN36).+)/i);
-  //           const address = addressMatch ? addressMatch[0].toUpperCase() : parcelText.split('\n')[0].toUpperCase();
-            
-  //           return {
-  //             Date: `${day}/${month}/26`,
-  //             Seller: seller,
-  //             Tracking: tracking,
-  //             Device: device,
-  //             Buyer: buyer,
-  //             Address: address
-  //           };
-  //         });
-  //       }
-  //     }
-
-  //     if (parsed.length === 0) {
-  //       notify("No parcels extracted. Try a different format.", "err");
-  //     } else {
-  //       setAiResults(parsed);
-  //       notify(`${parsed.length} parcel${parsed.length !== 1 ? "s" : ""} extracted ✓`);
-  //     }
-  //   } catch (e) {
-  //     notify("Extraction failed: " + e.message, "err");
-  //   }
-  //   load("ai", false);
-  // };
-
-  
-
-
-//   const extractAI = async () => {
-//     if (!aiText.trim()) return;
-//     load("ai",true); setAiResults(null);
-//     try {
-//       const priceStr = prices.map(p=>`"${p.device}":€${p.price}`).join(", ");
-//       const sellers  = sheets.sellers.map(s=>s.name).join(", ");
-//       const buyers   = sheets.buyers.map(b=>b.name).join(", ");
-//       const sys = `Extract mobile phone delivery parcels from messy WhatsApp text.
-// Price list: {${priceStr}}
-// Known sellers: ${sellers}. Known buyers: ${buyers}. Default buyer: Shoaib.
-// Today: ${todayStr()}
-
-// Extract EVERY parcel found, even if information is incomplete.
-// - Date: D/M/YY from timestamp (e.g., "[4/29" → 29/4/26)
-// - Device: match to price list if possible, otherwise the model name mentioned
-// - Buyer: Shoaib if address contains "APARTMENT 157" or "D07KN36"
-// - Seller: extract from sender name before the timestamp
-// - Tracking: numbers like LK817841390IE or just digits
-// - Address: the full address mentioned
-
-// IMPORTANT: Return ONLY a valid JSON array. No markdown, no explanation:
-// [{"Date":"D/M/YY","Device":"model","Buyer":"name","Seller":"name","Tracking":"code","Address":"FULL"}]`;
-
-
-
-
-
-//       //       const sys = `You extract mobile phone delivery parcels from messy WhatsApp/text.
-// // Price list (use exact names): {${priceStr}}
-// // Known sellers: ${sellers}. Known buyers: ${buyers}. Default buyer: Shoaib.
-// // Today: ${todayStr()}
-// // Rules:
-// // - Extract ALL separate parcels, even if many in one paste.
-// // - Tracking: LK817841531IE format or 9-digit numbers.
-// // - Seller: guess from WhatsApp sender e.g. "[4/24(this you will use for Date of the delivery, year should be current), 2:04 PM] Zaheer:" → Zaheer.
-// // - Address: reconstruct uppercase single line.
-// // - Device: match exactly to price list.
-// // - "APARTMENT 157" or "D07KN36" in address → buyer is Shoaib.
-// // Return ONLY valid JSON array, no markdown:
-// // [{"Date":"D/M/YY","Device":"exact","Buyer":"name","Seller":"name","Tracking":"number","Address":"FULL ADDRESS"}]`;
-
-
-
-
-
-
-
-//       const res = await fetch("/api/extract", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"gemini-2.0-flash",max_tokens:2000,system:sys,messages:[{role:"user",content:aiText}]})});
-//       const d = await res.json();
-//       const raw = d.content?.find(b=>b.type==="text")?.text||"[]";
-//       let parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
-
-//       // If empty or invalid, attempt regex fallback
-//       if (!Array.isArray(parsed) || parsed.length === 0) {
-//         console.warn("Gemini returned no parcels, attempting regex fallback");
-//         const trackingMatch = aiText.match(/LK\d+IE|\d{9,}/);
-//         const addressLines = aiText.split('\n').filter(l => l.trim().length > 0);
-//         parsed = [{ 
-//           Date: todayStr(), 
-//           Device: "", 
-//           Buyer: "Shoaib", 
-//           Seller: "", 
-//           Tracking: trackingMatch?.[0] || "", 
-//           Address: addressLines.slice(1).join(" ").toUpperCase() || ""
-//         }];
-//       }
-
-//       setAiResults(Array.isArray(parsed)?parsed:[parsed]);
-//     } catch(e){notify("Extraction failed: "+e.message,"err");}
-//     load("ai",false);
-//   };
 
   const confirmEntries = async () => {
     load("confirm",true);
