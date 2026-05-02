@@ -20,7 +20,7 @@ TODAY: ${new Date().toLocaleDateString("en-GB").replace(/\//g, "/").split("/").m
 
 RULES:
 1. Each WhatsApp timestamp like [4/29, 1:03 PM] starts a new parcel.
-2. DATE: from timestamp [M/D] → format as D/M/YY (e.g. [4/29] → 29/4/26).
+2. DATE: from timestamp [M/D] → format as M/D/YYYY (e.g. [4/29] → 4/29/2026).
 3. SELLER: name after timestamp before colon → match to sellers list (e.g. "Talha Seller:" → "Talha").
 4. TRACKING: code like LK817841390IE or 9-digit number.
 5. DEVICE: match text to device list exactly. "Apple 17 pro max" = "IPhone 17 Pro Max 256gb". "S25FE" = "Samsung S25 FE 128gb".
@@ -28,7 +28,7 @@ RULES:
 7. ADDRESS: full address on one line in UPPERCASE.
 
 Return an array of objects matching this schema exactly:
-[{"Date":"29/4/26","Device":"IPhone 17 Pro Max 256gb","Buyer":"Shoaib","Seller":"Talha","Tracking":"LK817841390IE","Address":"APARTMENT 157 THE OLD DISTILLERY ANNE STREET NORTH DUBLIN 7 D07 KN36"}]
+[{"Date":"4/29/2026","Device":"IPhone 17 Pro Max 256gb","Buyer":"Shoaib","Seller":"Talha","Tracking":"LK817841390IE","Address":"APARTMENT 157 THE OLD DISTILLERY ANNE STREET NORTH DUBLIN 7 D07 KN36"}]
 
 INPUT:
 ${text}`;
