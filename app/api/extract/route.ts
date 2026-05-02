@@ -57,7 +57,10 @@ export async function POST(req: NextRequest) {
       JSON.parse(text);
     } catch {
       console.error("Gemini returned non-JSON:", text.slice(0, 300));
+      // Add this line to see what Gemini actually returned
+      console.error("Full Gemini response:", JSON.stringify(data, null, 2));
       text = "[]";
+      
     }
 
     // Return in Anthropic-compatible shape so frontend needs zero changes
