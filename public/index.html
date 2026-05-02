@@ -585,17 +585,74 @@ function App() {
             </div>
           )}
 
-          {tab==="report"&&(
-            <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"calc(100vh - 48px)",gap:14,padding:20,textAlign:"center"}}>
-              <div style={{fontSize:40}}>📊</div>
-              <div style={{fontSize:17,fontWeight:800}}>Weekly Report</div>
-              <div style={{fontSize:13,color:C.muted,maxWidth:360,lineHeight:1.6}}>Generates last week's summary (Mon–Sun) and sends it to your WhatsApp via Twilio.</div>
-              <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:12,maxWidth:340,fontSize:12,color:C.muted,lineHeight:1.7}}>
-                Includes: units per buyer & seller · totals at sell prices · totals at cost prices (deductions applied)
+{tab==="report"&&(
+            <div style={{display:"flex",flexDirection:"column",height:"100%",padding:20,maxWidth:800,margin:"0 auto"}}>
+              
+              <div style={{display:"flex",gap:20,flexWrap:"wrap",marginBottom:20}}>
+                {/* Standard Last Week Report Card */}
+                <div style={{flex:"1 1 300px",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:20,display:"flex",flexDirection:"column",gap:12}}>
+                  <div style={{fontSize:16,fontWeight:800,display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:20}}>📅</span> Last Week Report
+                  </div>
+                  <div style={{fontSize:12,color:C.muted,lineHeight:1.6,flex:1}}>
+                    Generates summary for the previous week (Monday to Sunday).
+                  </div>
+                  <button style={{...btn(C.green),padding:"12px",fontSize:13,width:"100%",opacity:busy.report?0.6:1}} onClick={() => generateReport(false)} disabled={busy.report}>
+                    {busy.report?"⏳ Generating…":"Generate Last Week"}
+                  </button>
+                </div>
+
+                {/* Custom Date Report Card */}
+                <div style={{flex:"1 1 300px",background:C.card,border:`1px solid ${C.border}`,borderRadius:8,padding:20,display:"flex",flexDirection:"column",gap:12}}>
+                  <div style={{fontSize:16,fontWeight:800,display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:20}}>🔍</span> Custom Date Range
+                  </div>
+                  <div style={{display:"flex",gap:10}}>
+                    <div style={{flex:1}}>
+                      <label style={lbl}>FROM DATE</label>
+                      <input type="date" style={{...inp,fontSize:12,colorScheme:"dark"}} value={repStart} onChange={e=>setRepStart(e.target.value)}/>
+                    </div>
+                    <div style={{flex:1}}>
+                      <label style={lbl}>TO DATE</label>
+                      <input type="date" style={{...inp,fontSize:12,colorScheme:"dark"}} value={repEnd} onChange={e=>setRepEnd(e.target.value)}/>
+                    </div>
+                  </div>
+                  <button style={{...btn(C.accent),padding:"12px",fontSize:13,width:"100%",opacity:busy.report?0.6:1,marginTop:"auto"}} onClick={() => generateReport(true)} disabled={busy.report}>
+                    {busy.report?"⏳ Generating…":"Generate Custom Range"}
+                  </button>
+                </div>
               </div>
-              <button style={{...btn(C.green),padding:"11px 28px",fontSize:14,opacity:busy.report?0.6:1}} onClick={sendReport} disabled={busy.report}>
-                {busy.report?"⏳ Generating…":"📲 Send WhatsApp Report"}
-              </button>
+
+              {/* Textbox Display Output */}
+              <div style={{flex:1,display:"flex",flexDirection:"column"}}>
+                <label style={{...lbl,fontSize:12,marginBottom:8}}>REPORT OUTPUT (Preview)</label>
+                <textarea 
+                  readOnly 
+                  value={repDisplay}
+                  placeholder="The generated report will appear here..."
+                  style={{
+                    ...inp,
+                    flex:1,
+                    resize:"none",
+                    fontFamily:"monospace",
+                    fontSize:13,
+                    lineHeight:1.6,
+                    padding:16,
+                    backgroundColor:"#0f172a",
+                    border:`1px solid ${C.border}`,
+                    whiteSpace:"pre-wrap"
+                  }}
+                />
+                {repDisplay && (
+                  <button 
+                    style={{...ghost,marginTop:12,alignSelf:"flex-end"}}
+                    onClick={() => {navigator.clipboard.writeText(repDisplay); notify("Copied to clipboard ✓");}}
+                  >
+                    📋 Copy Text
+                  </button>
+                )}
+              </div>
+
             </div>
           )}
         </div>
