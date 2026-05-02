@@ -1,77 +1,71 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const GEMINI_MODEL = "gemini-2.0-flash";
-
 export async function POST(req: NextRequest) {
   try {
-    const { system, messages } = await req.json();
+    const { text, prices, sellers, buyers } = await req.json();
 
-    const userContent = messages?.[0]?.content || "";
+    const deviceList = (prices || []).map((p: {device: string}) => p.device).join("\n");
+    const sellerList = (sellers || []).map((s: {name: string}) => s.name).join(", ");
+    const buyerList  = (buyers  || []).map((b: {name: string}) => b.name).join(", ");
 
-    // Gemini works best with a single merged prompt — keep system instructions
-    // tightly bound to the user content, and explicitly repeat JSON-only instruction
-    const prompt = [
-      system,
-      "---",
-      "INPUT TEXT:",
-      userContent,
-      "---",
-      "IMPORTANT: Your response must be ONLY a valid JSON array. No markdown, no backticks, no explanation. Start your response with [ and end with ].",
-    ].join("\n\n");
+    const prompt = `Extract mobile phone delivery parcels from the WhatsApp/text below.
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`,
+DEVICE LIST (return EXACT name or empty string):
+${deviceList}
+
+SELLERS: ${sellerList}
+BUYERS: ${buyerList}
+DEFAULT BUYER: Shoaib
+TODAY: ${new Date().toLocaleDateString("en-GB").replace(/\//g, "/").split("/").map((v,i)=>i===2?v.slice(-2):v).join("/")}
+
+RULES:
+1. Each WhatsApp timestamp like [4/29, 1:03 PM] starts a new parcel.
+2. DATE: from timestamp [M/D] → format as D/M/YY (e.g. [4/29] → 29/4/26).
+3. SELLER: name after timestamp before colon → match to sellers list (e.g. "Talha Seller:" → "Talha").
+4. TRACKING: code like LK817841390IE or 9-digit number.
+5. DEVICE: match text to device list exactly. "Apple 17 pro max" = "IPhone 17 Pro Max 256gb". "S25FE" = "Samsung S25 FE 128gb".
+6. BUYER: if address has "APARTMENT 157" or "D07KN36" → "Shoaib".
+7. ADDRESS: full address on one line in UPPERCASE.
+
+Return ONLY a JSON array. No markdown. No explanation. Start with [ end with ].
+Example: [{"Date":"29/4/26","Device":"IPhone 17 Pro Max 256gb","Buyer":"Shoaib","Seller":"Talha","Tracking":"LK817841390IE","Address":"APARTMENT 157 THE OLD DISTILLERY ANNE STREET NORTH DUBLIN 7 D07 KN36"}]
+
+INPUT:
+${text}`;
+
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 2048,
-            // No responseMimeType — let Gemini return plain text so it
-            // can produce a JSON array (mimeType forces object schema)
-          },
+          generationConfig: { temperature: 0, maxOutputTokens: 2048 },
         }),
       }
     );
 
-    const data = await response.json();
+    const data = await resp.json();
 
-    if (!response.ok) {
+    if (!resp.ok) {
       console.error("Gemini error:", JSON.stringify(data));
-      return NextResponse.json(
-        { error: data?.error?.message || "Gemini API error" },
-        { status: response.status }
-      );
+      return NextResponse.json({ error: data?.error?.message || "Gemini error" }, { status: 500 });
     }
 
-    // Extract text from Gemini response
-    let text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+    let raw = data?.candidates?.[0]?.content?.parts?.[0]?.text || "[]";
+    console.log("Gemini raw:", raw.slice(0, 500));
 
-    // Strip any accidental markdown fences Gemini might still add
-    text = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+    raw = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
 
-    // Validate it's parseable — fall back to empty array if not
-    try {
-      JSON.parse(text);
-    } catch {
-      console.error("Gemini returned non-JSON:", text.slice(0, 300));
-      // Add this line to see what Gemini actually returned
-      console.error("Full Gemini response:", JSON.stringify(data, null, 2));
-      text = "[]";
-      
+    // Validate JSON
+    try { JSON.parse(raw); } catch {
+      console.error("Invalid JSON from Gemini:", raw.slice(0, 300));
+      raw = "[]";
     }
 
-    // Return in Anthropic-compatible shape so frontend needs zero changes
-    return NextResponse.json({
-      content: [{ type: "text", text }],
-    });
+    return NextResponse.json({ content: [{ type: "text", text: raw }] });
   } catch (err) {
     console.error("Route error:", err);
-    return NextResponse.json(
-      { error: "Proxy error: " + String(err) },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: String(err) }, { status: 500 });
   }
 }
