@@ -148,23 +148,57 @@ function App() {
       const priceStr = prices.map(p=>`"${p.device}":€${p.price}`).join(", ");
       const sellers  = sheets.sellers.map(s=>s.name).join(", ");
       const buyers   = sheets.buyers.map(b=>b.name).join(", ");
-      const sys = `You extract mobile phone delivery parcels from messy WhatsApp/text.
-Price list (use exact names): {${priceStr}}
+      const sys = `Extract mobile phone delivery parcels from messy WhatsApp text.
+Price list: {${priceStr}}
 Known sellers: ${sellers}. Known buyers: ${buyers}. Default buyer: Shoaib.
 Today: ${todayStr()}
-Rules:
-- Extract ALL separate parcels, even if many in one paste.
-- Tracking: LK817841531IE format or 9-digit numbers.
-- Seller: guess from WhatsApp sender e.g. "[4/24(this you will use for Date of the delivery, year should be current), 2:04 PM] Zaheer:" → Zaheer.
-- Address: reconstruct uppercase single line.
-- Device: match exactly to price list.
-- "APARTMENT 157" or "D07KN36" in address → buyer is Shoaib.
-Return ONLY valid JSON array, no markdown:
-[{"Date":"D/M/YY","Device":"exact","Buyer":"name","Seller":"name","Tracking":"number","Address":"FULL ADDRESS"}]`;
+
+Extract EVERY parcel found, even if information is incomplete.
+- Date: D/M/YY from timestamp (e.g., "[4/29" → 29/4/26)
+- Device: match to price list if possible, otherwise the model name mentioned
+- Buyer: Shoaib if address contains "APARTMENT 157" or "D07KN36"
+- Seller: extract from sender name before the timestamp
+- Tracking: numbers like LK817841390IE or just digits
+- Address: the full address mentioned
+
+IMPORTANT: Return ONLY a valid JSON array. No markdown, no explanation:
+[{"Date":"D/M/YY","Device":"model","Buyer":"name","Seller":"name","Tracking":"code","Address":"FULL"}]`;
+
+
+
+      //       const sys = `You extract mobile phone delivery parcels from messy WhatsApp/text.
+// Price list (use exact names): {${priceStr}}
+// Known sellers: ${sellers}. Known buyers: ${buyers}. Default buyer: Shoaib.
+// Today: ${todayStr()}
+// Rules:
+// - Extract ALL separate parcels, even if many in one paste.
+// - Tracking: LK817841531IE format or 9-digit numbers.
+// - Seller: guess from WhatsApp sender e.g. "[4/24(this you will use for Date of the delivery, year should be current), 2:04 PM] Zaheer:" → Zaheer.
+// - Address: reconstruct uppercase single line.
+// - Device: match exactly to price list.
+// - "APARTMENT 157" or "D07KN36" in address → buyer is Shoaib.
+// Return ONLY valid JSON array, no markdown:
+// [{"Date":"D/M/YY","Device":"exact","Buyer":"name","Seller":"name","Tracking":"number","Address":"FULL ADDRESS"}]`;
       const res = await fetch("/api/extract", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"gemini-2.0-flash",max_tokens:2000,system:sys,messages:[{role:"user",content:aiText}]})});
       const d = await res.json();
       const raw = d.content?.find(b=>b.type==="text")?.text||"[]";
-      const parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+      let parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+
+      // If empty or invalid, attempt regex fallback
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        console.warn("Gemini returned no parcels, attempting regex fallback");
+        const trackingMatch = aiText.match(/LK\d+IE|\d{9,}/);
+        const addressLines = aiText.split('\n').filter(l => l.trim().length > 0);
+        parsed = [{ 
+          Date: todayStr(), 
+          Device: "", 
+          Buyer: "Shoaib", 
+          Seller: "", 
+          Tracking: trackingMatch?.[0] || "", 
+          Address: addressLines.slice(1).join(" ").toUpperCase() || ""
+        }];
+      }
+
       setAiResults(Array.isArray(parsed)?parsed:[parsed]);
     } catch(e){notify("Extraction failed: "+e.message,"err");}
     load("ai",false);
