@@ -534,7 +534,8 @@ function App() {
             <div style={{padding:16,maxWidth:680}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
                 <span style={{fontWeight:700,fontSize:14}}>Price List <span style={{fontSize:12,color:C.muted,fontWeight:400}}>({prices.length} devices)</span></span>
-                <button style={{...btn(C.green),opacity:busy.sync?0.6:1}} onClick={syncPrices} disabled={busy.sync}>{busy.sync?"Syncing…":"⬆ Sync to All Sellers"}</button>
+                
+                <button style={{...btn(C.green),opacity:busy.sync?0.6:1,width:"100%",marginTop:12}} onClick={syncPrices} disabled={busy.sync}>{busy.sync?"Updating…":"⬆ Update Prices"}</button>
               </div>
               <div style={{background:C.card,borderRadius:8,padding:14,border:`1px solid ${C.border}`,marginBottom:14}}>
                 <div style={{fontSize:11,color:C.muted,fontWeight:700,marginBottom:10,letterSpacing:0.5}}>ADD / EDIT DEVICE</div>
