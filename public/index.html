@@ -765,12 +765,32 @@ function App() {
                 </button>
               </>)}
 
-              {panel==="settings"&&(<>
-                <div style={{fontSize:11,color:C.muted,fontWeight:700,letterSpacing:0.5}}>CONNECTION</div>
+            {panel === "settings" && (
+              <>
+                <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, letterSpacing: 0.5 }}>
+                  CONNECTION
+                </div>
+
+                {/* Immutable URL Display */}
                 <div>
                   <label style={lbl}>WEB APP URL</label>
-                  <input style={{...inp,fontSize:11}} value={urlDraft} onChange={e=>setUrlDraft(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec"/>
+                  <div 
+                    style={{
+                      ...inp, 
+                      background: "rgba(255,255,255,0.05)", 
+                      color: C.muted, 
+                      fontSize: 10, 
+                      wordBreak: "break-all", 
+                      cursor: "default",
+                      userSelect: "all", // Allows easy copying even if immutable
+                      borderStyle: "dashed"
+                    }}
+                  >
+                    {SCRIPT_URL}
+                  </div>
                 </div>
+
+                {/* Token Input */}
                 <div>
                   <label style={lbl}>AUTH TOKEN</label>
                   <input style={inp} type="password" value={tokenDraft} onChange={e=>setTokenDraft(e.target.value)} placeholder="Secret token"/>
