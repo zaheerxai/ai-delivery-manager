@@ -84,13 +84,16 @@ function App() {
     const cfg = storage.get("dm-config-v1");
     if (cfg?.value) {
       try {
-        const { url, token } = JSON.parse(cfg.value);
-        if (url && token) {
-          setGasUrl(url); setUrlDraft(url); urlRef.current = url;
-          setToken(token); setTokenDraft(token); tokRef.current = token;
+        const { token } = JSON.parse(cfg.value); // Removed 'url'
+        if (token) {
+          setToken(token); 
+          setTokenDraft(token); 
+          tokRef.current = token;
           setReady(true);
         }
-      } catch {}
+      } catch (e) {
+        console.error("Config load error:", e);
+      }
     }
   }, []);
 
@@ -129,21 +132,29 @@ function App() {
   const fetchSheets = async () => { try { setSheets(await api("sheets")||{sellers:[],buyers:[]}); } catch {} };
 
   const saveConfig = async () => {
-    if (!urlDraft.trim()||!tokenDraft.trim()) { setConnectErr("Both URL and token required."); return; }
-    setConnectErr(""); load("connect",true);
-    urlRef.current = urlDraft.trim(); tokRef.current = tokenDraft;
+    if (!tokenDraft.trim()) { 
+      setConnectErr("Auth token required."); 
+      return; 
+    }
+    setConnectErr(""); 
+    load("connect", true);
+    tokRef.current = tokenDraft;
+    
     try {
+      // This tests the connection by fetching sheet names
       await api("sheets");
-      setGasUrl(urlDraft.trim()); setToken(tokenDraft);
-      storage.set("dm-config-v1", JSON.stringify({ url:urlDraft.trim(), token:tokenDraft }));
-      setReady(true); setPanel(null); notify("Connected ✓");
+      setToken(tokenDraft);
+      // Only save the token to local storage
+      storage.set("dm-config-v1", JSON.stringify({ token: tokenDraft }));
+      setReady(true); 
+      setPanel(null); 
+      notify("Connected ✓");
     } catch(e) {
-      urlRef.current = gasUrl; tokRef.current = token;
+      tokRef.current = token;
       setConnectErr(e.message);
     }
-    load("connect",false);
+    load("connect", false);
   };
-
 
   const extractAI = async () => {
     if (!aiText.trim()) return;
@@ -764,7 +775,7 @@ function App() {
                   {busy.pay?"Recording…":"✓ Record Payment"}
                 </button>
               </>)}
-              
+
             {panel === "settings" && (
               <>
                 <div style={{ fontSize: 11, color: C.muted, fontWeight: 700, letterSpacing: 0.5 }}>
@@ -809,8 +820,17 @@ function App() {
                   <div style={{fontSize:12,marginBottom:4}}><span style={{color:C.muted}}>Total rows: </span>{rows.length}</div>
                   <div style={{fontSize:12}}><span style={{color:C.muted}}>Price list devices: </span>{prices.length}</div>
                 </div>
-                <button style={{...ghost,color:C.red,borderColor:"#7f1d1d",fontSize:11,width:"100%",marginTop:4}}
-                  onClick={()=>{storage.del("dm-config-v1");setReady(false);setToken("");setGasUrl("");setUrlDraft("");setTokenDraft("");}}>
+                <button 
+                  style={{...ghost, color: C.red, borderColor: "#7f1d1d", fontSize: 11, width: "100%", marginTop: 4}}
+                  onClick={() => {
+                    storage.del("dm-config-v1");
+                    setReady(false);
+                    setToken("");
+                    setTokenDraft("");
+                    tokRef.current = "";
+                    // Note: setGasUrl and setUrlDraft were removed here to prevent errors
+                  }}
+                >
                   Disconnect
                 </button>
               </>)}
