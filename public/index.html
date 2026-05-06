@@ -21,6 +21,7 @@
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
 
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwYVkW9eAKV427CbDK7t1Eo65OQ5mJQc93U98G2fG7XaHQdGvHOlO2O7zk0RhbC8Hob/exec";
 // Worker proxy removed - calling Google Apps Script directly for multi-device support
 
 const C = {
@@ -44,9 +45,7 @@ function App() {
   const [repStart, setRepStart] = useState("");
   const [repEnd, setRepEnd] = useState("");
   
-  const [gasUrl, setGasUrl]         = useState("");
   const [token, setToken]           = useState("");
-  const [urlDraft, setUrlDraft]     = useState("");
   const [tokenDraft, setTokenDraft] = useState("");
   const [ready, setReady]           = useState(false);
   const [connectErr, setConnectErr] = useState("");
@@ -79,7 +78,6 @@ function App() {
   const [confirmSheetDel, setConfirmSheetDel] = useState(null);
 
   const toastRef = useRef();
-  const urlRef   = useRef("");
   const tokRef   = useRef("");
 
   useEffect(() => {
@@ -106,14 +104,14 @@ function App() {
   const load = (k, v) => setBusy(b => ({...b,[k]:v}));
 
   const api = async (action, params={}) => {
-    const url = urlRef.current;
     const tok = tokRef.current;
-    if (!url || !tok) throw new Error("Not connected");
+    if (!tok) throw new Error("Not connected");
     const qs = new URLSearchParams({
       token: tok, action,
       body: JSON.stringify({ token: tok, action, ...params })
     }).toString();
-    const target = `${url}?${qs}`;
+    
+    const target = `${SCRIPT_URL}?${qs}`; // Uses the hardcoded constant
     // Call Google Apps Script directly - supports multiple devices simultaneously
     const res = await fetch(target, { redirect: 'follow' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -308,11 +306,18 @@ function App() {
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",height:"100vh",background:C.bg,color:C.text,padding:16}}>
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:28,width:"100%",maxWidth:400}}>
         <div style={{fontSize:22,fontWeight:800,marginBottom:4}}>📦 Delivery Manager</div>
-        <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Connect to your Google Apps Script Web App.</div>
-        <label style={lbl}>WEB APP URL</label>
-        <input style={{...inp,marginBottom:12,fontSize:12}} value={urlDraft} onChange={e=>setUrlDraft(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec"/>
+        <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Enter your secret token to connect.</div>
+        
         <label style={lbl}>AUTH TOKEN</label>
-        <input style={{...inp,marginBottom:16}} type="password" value={tokenDraft} onChange={e=>setTokenDraft(e.target.value)} placeholder="Your secret token" onKeyDown={e=>e.key==="Enter"&&saveConfig()}/>
+        <input 
+          style={{...inp,marginBottom:16}} 
+          type="password" 
+          value={tokenDraft} 
+          onChange={e=>setTokenDraft(e.target.value)} 
+          placeholder="Your secret token" 
+          onKeyDown={e=>e.key==="Enter"&&saveConfig()}
+        />
+        
         <button style={{...btn(),width:"100%",padding:10,fontSize:13,opacity:busy.connect?0.6:1}} onClick={saveConfig} disabled={busy.connect}>
           {busy.connect?"Connecting…":"Connect"}
         </button>
